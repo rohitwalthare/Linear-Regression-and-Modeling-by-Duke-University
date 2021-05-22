@@ -1,0 +1,303 @@
+---
+title: "Modeling and prediction for movies"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(statsr)
+library(gridExtra)
+library(corrplot)
+library("Hmisc")
+library(tidyverse)
+```
+
+### Load data
+
+```{r load-data}
+load("movies.Rdata")
+```
+* * *
+
+## Part 1: Data
+The data set is comprised of 651 randomly sampled movies produced and released before 2016, including information from the widely acclaimed websites IMDB and Rotten Tomatoes.
+Studies based on this sample are: generalizable to the movie released before the year 2016 and not causal because there is no random assignment used in the sample collection.
+
+The provided dataset contains information about the title of a movie, genre, runtime, studio, release, critics rating, director, and other 25 more variables.
+* * *
+
+## Part 2: Research question
+This study aims to determine how the movie's popularity is measured, by using variables in the dataset as an audience score, related to the genre of movie, its runtime, IMDb rating, number of votes, critics rating, score, audience rating, oscar awards won (actor, actress, director, and picture)? The fact that we can answer this question will help us predict the popularity of a movie.
+* * *
+
+## Part 3: Exploratory data analysis
+Summary of data from the above-mentioned potential predictors for the model.
+```{r}
+model_movies <- movies %>% select(title, title_type, genre, runtime, imdb_rating, imdb_num_votes, critics_rating, critics_score, audience_rating, audience_score, best_pic_win, best_actor_win, best_actress_win, best_dir_win)
+
+```
+Examine the structure of data.
+```{r}
+str(model_movies)
+```
+
+
+* * *
+**Summary statistics**
+```{r}
+summary(model_movies)
+
+```
+Removing NA's if there any.
+
+```{r}
+model_movies <- na.omit(model_movies)
+```
+
+Part of the project is to use the model to predict the audience score of a film and that film should not be included in the data. So I've split the data into training and testing, and there's only one line in the test set.
+```{r}
+set.seed(2017)
+split <- sample(seq_len(nrow(model_movies)), size = floor(0.999 * nrow(model_movies)))
+train <- model_movies[split, ]
+test <- model_movies[-split, ]
+dim(train)
+dim(test)
+```
+**Plotting Histograms of Numerical Variables and obtaining their summary**
+```{r}
+hist(train$audience_score)
+```
+```{r}
+summary(train$audience_score)
+
+```
+Our response variable 'audience score' has a median of 65, that is. 25% of the movie in the training set have an audience score higher than 80 and 25% of the movie in the training set have an audience score lower than 46. 
+Very few movies have an audience score under 20 or above 90 (i.e. the audience in the data is unlikely to give a very low or very high score).
+
+```{r}
+plot1 <- ggplot(aes(x=runtime), data=train) + 
+  geom_histogram(aes(y=100*(..count..)/sum(..count..)), color='black', fill = 'grey', binwidth = 5) + ylab('percentage') + ggtitle('Run Time of movies')
+
+plot2 <- ggplot(aes(x=imdb_rating), data=train) +
+  geom_histogram(aes(y=100*(..count..)/sum(..count..)), color='black', fill = 'grey', binwidth = 0.2) + ylab('percentage') + ggtitle('IMDB ratings')
+
+plot3 <- ggplot(aes(x=log10(imdb_num_votes)), data=train) +
+  geom_histogram(aes(y=100*(..count..)/sum(..count..)), color='black', fill = 'grey', binwidth = 0.2) +  ylab('percentage') + ggtitle('log(IMDB number of votes)')
+
+plot4 <- ggplot(aes(x=critics_score), data=train) +
+  geom_histogram(aes(y=100*(..count..)/sum(..count..)), color='black', fill = 'grey', binwidth = 2) + ylab('percentage') + ggtitle('Critics Score')
+
+grid.arrange(plot1, plot2, plot3, plot4, ncol=2)
+
+```
+Regression analysis: Movies run time, IMDB ratings, log (IMDB number of votes), and critical scores all have a wide reasonable distribution, so they will be considered for regression analysis.
+
+**Plotting Bar plot of categorical variables.**
+```{r}
+plot5 <- ggplot(aes(x=title_type), data=train) + geom_bar(aes(y=100*(..count..)/sum(..count..)), color='black', fill = 'grey') + ylab('percentage') +  ggtitle('Title Type') 
+
+plot6 <- ggplot(aes(x=genre), data=train) + geom_bar(aes(y=100*(..count..)/sum(..count..)), color='black', fill = 'grey') + ylab('percentage') +  ggtitle('Genre') + coord_flip()
+
+plot7 <- ggplot(aes(x=critics_rating), data=train) + geom_bar(aes(y=100*(..count..)/sum(..count..)), color='black', fill = 'grey') + ylab('percentage') +  ggtitle('Critics Rating') 
+
+plot8 <- ggplot(aes(x=audience_rating), data=train) + geom_bar(aes(y=100*(..count..)/sum(..count..)), color='black', fill = 'grey') + ylab('percentage') +  ggtitle('Audience Rating') 
+
+grid.arrange(plot5, plot6, plot7, plot8, ncol=2)
+```
+All of these categorical variables are not reasonably distributed. Most of the movies in the data are “Feature Film” and most of the films are having a genre as drama. As a result, we must be aware that the results could be biased in a favour of dramatic movies.
+
+**Correlation between numerical variables**
+```{r}
+vars <- names(train) %in% c('runtime', 'imdb_rating', 'imdb_num_votes', 'critics_score')
+selected_train <- train[vars]
+
+corr.matrix <- cor(selected_train)
+corrplot(corr.matrix, method="pie", main ="\nCorrelation Plot of numerical variables")
+```
+Two predictors - critics_score and imdb_rating are strongly correlated with more than 75% (collinearity), so, one will be removed from the model, I decided to remove the critics_score.
+
+**Correlation between categorical variables and audience score**
+```{r}
+plot9 <- boxplot(audience_score~critics_rating, data=train, main='Audience score vs. Critics rating', xlab='Critics Rating', ylab='Audience Score')
+```
+
+
+```{r}
+by(train$audience_score, train$critics_rating, summary)
+```
+
+
+```{r}
+plot10 <- boxplot(audience_score~audience_rating, data=train, main='Audience Score vs. Audience Rating', xlab='Audience rating', ylab='Audience Score')
+```
+
+
+```{r}
+by(train$audience_score, train$audience_rating, summary)
+```
+
+
+```{r}
+plot11 <- boxplot(audience_score~title_type, data=train, main='Audience score vs. Title type', xlab='Title_type', ylab='Audience Score')
+```
+
+
+```{r}
+by(train$audience_score, train$title_type, summary)
+```
+
+
+```{r}
+plot12 <- boxplot(audience_score~genre, data=train, main='Audience score vs. Genre', xlab='Genre', ylab='Audience score')
+```
+
+
+```{r}
+by(train$audience_score, train$genre, summary)
+
+```
+All categorical variables appear to correlate reasonably significantly with the audience score.
+
+## Part 4: Modeling
+We will use the stepwise model forward selection method and start with an empty model, then add variables one at a time until a parsimonious model is reached. 
+
+```{r}
+full_model_movies <- lm(audience_score~imdb_rating + title_type + genre + runtime + imdb_num_votes + critics_rating + audience_rating + best_pic_win + best_actor_win + best_actress_win + best_dir_win, data=train)
+
+summary(full_model_movies)
+```
+From the following full model, we can see that imdb_rating has the lowest p-value and is the most correlated variable to our response variable. 
+As a result, we chose imdb_rating as our first predictor.
+ 
+```{r}
+model1 <- lm(audience_score ~ imdb_rating, data=train)
+summary(model1)
+```
+The 0.748 R-squared and almost zero p-values indicate that imdb_rating is a statistically significant predictor of audience score.
+
+To find out the second predictor, I look at the following model.
+
+```{r}
+model2 <- lm(audience_score~title_type + genre + runtime + imdb_num_votes + critics_rating + audience_rating + best_pic_win + best_actor_win + best_actress_win + best_dir_win, data=train)
+
+summary(model2)
+```
+We add audience_rating as the second predictor because of the lowest p value.
+```{r}
+model3 <- lm(audience_score ~ imdb_rating + audience_rating, data=train)
+
+summary(model3)
+```
+The models we have run so far, R-squared and Adjusted R-Squared both increased significantly, the almost zero p-values indicate that audience_rating is another statistically significant predictor of audience_score.
+
+1. After the above second model, I did the following attempts:
+Added critics_rating to the model but the Adjust R-squared only increased from 0.8817 to 0.8819, the p-value is insignificant at 0.61896 and 0.10116. Therefore, we will not include critics rating as a predictor.
+
+2. Added imdb_num_votes to the model but the Adjust R-squared decreased from 0.8817 to 0.8815 and the p-value is not significant at 0.734. So, we will not include imdb_num_votes in the model.
+
+3. Added genre to the model and the Adjust R-squared increased from 0.8817 to 0.8847, the amount variance it explains at 0.8868 versus 0.8812 without. From the ANOVA analysis, we can see that the p-value is significant at 0.0033.
+
+4. variables such as title type, runtime, best_pic_win, best_actor_win, best_actress_win, best_dir_win are not significant predictors, therefore, they will not be included in the model.
+
+```{r}
+model4 <- lm(audience_score ~ imdb_rating + audience_rating + genre, data=train)
+
+anova(model4)
+```
+Hence, I decide to add genre as one of the predictors. So, I arrived at our final model - Parsimonious Model, with three predictors as imdb_rating, audience_rating, and genre.
+
+```{r}
+summary(model4)
+```
+**Interpretation of the model:**
+1. R-Squared(0.8847): 88.71% of the variablity in audience score can be explained by the model.
+
+2. Intercept(-12.5588) is the estimated audience score for a movie with imdb_rating, audience_rating and genre at zero. It does not provide any meaningful interpretation here.
+
+3. imdb_rating coefficient(9.8033): All else hold constant, for every one unit increase in imdb_rating, the model predicts a 9.8033 increase in audience_score on average.
+
+4. genreMystery & Suspense coefficient(-3.2744): The model predicts that genreMystery & Suspense films get an audience score that is 3.2744 lower than Action & Adventure films on average after controlling for imdb_rating and audience rating.
+
+5. audience_ratingUpright coefficient(20.3058): All else hold constant, the model predicts rating Upright movie is 20.3058 higher in audience score on average than rating Spilled movie.
+
+6. genreAnimation coefficient(3.6263): The model predicts that Animation films get an audience score that is 3.6263 higher than Action & Adventure(reference category) films on average after controlling for imdb_rating and audience rating.
+
+7. The total 11 genre categories in the dataset, the audience score can be higher or lower than Action & Adventure films depends on what genre is selected.
+
+**Model diagnostics**
+```{r}
+ggplot(data = model4, aes(x = .fitted, y = .resid)) +
+  geom_point() + geom_hline(yintercept = 0, linetype = "twodash") +
+  xlab("Fitted values") +
+  ylab("Residuals")
+```
+There is a linear relationship between imdb_rating and audience_score, thus the linearity condition is met by our model.
+The constant variance of residuals condition is met and no fan shape is shown in the residuals plot.
+
+**Plotting Histogram and Normal distribution graph for further confirmation**
+```{r}
+plot13 <- ggplot(data = model4, aes(x = .resid)) +
+  geom_histogram(binwidth = 1, fill='grey', color='black') +
+  xlab("Residuals")
+
+plot14 <- ggplot(data = model4, aes(sample = .resid)) +
+  stat_qq()
+
+grid.arrange(plot13, plot14, nrow=2)
+```
+
+From the above boxplot of residuals we can see that as a nearly symmetric, hence it would be appropriate to say that the normal distribution of residuals condition is met here.
+
+
+* * *
+
+## Part 5: Prediction
+Now we try to use the model created earlier as model4 to predict the audience_score for the movie from the data set of movies that we have.
+
+We are choosing- Cast Away.
+
+For such we need to create a new dataframe.
+```{r}
+imdb_rating<-7.7
+genre <- "Drama"
+critics_rating <-"Certified Fresh"
+audience_score= 83
+audience_rating<- "Upright"
+
+predictmovie <- test %>% select(genre, imdb_rating, audience_rating)
+predict(model4, predictmovie)
+```
+The model predicts movie Cast Away in the test set will have an audience score of approximate 76.5.
+
+```{r}
+predict(model4, predictmovie, interval = "prediction", level = 0.95)
+
+```
+The model predicts that the movie Cast Away is expected to have an audience score between 62.99971 and 90.01032 with 95% confidence Interval.
+
+```{r}
+test$audience_score
+
+```
+Te Exact audience score for this movie is 83. Our prediction interval contains this value.
+
+* * *
+
+## Part 6: Conclusion
+This model demonstrates that it is possible to predict a movie’s popularity using only three predictors - imdb score, audience rating and genre. 
+
+Movie industries can use the similar methods when producing movies that are more likely to be liked by the target audience furthermore this is just an assumption of my own that preety much fit with the real world.
+
+Although, the potential shortcoming to this model’s predictive power is limited because the sample data is not representative and therefore, a larger number of observations to capture more variability in the population data in our testing data set is required to obtain a better measure of the model’s accuracy.
+
+
+## Thank you for your time ##
